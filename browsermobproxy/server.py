@@ -3,6 +3,7 @@ import platform
 import socket
 import subprocess
 import time
+import logging
 
 from .client import Client
 from .exceptions import ProxyServerError
@@ -40,10 +41,10 @@ class RemoteServer(object):
         client = Client(self.url[7:], params)
         return client
 
-    def _is_listening(self):
+    def _is_listening(self, timeout = 1):
         try:
             socket_ = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            socket_.settimeout(1)
+            socket_.settimeout(timeout)
             socket_.connect((self.host, self.port))
             socket_.close()
             return True
@@ -108,6 +109,10 @@ class Server(RemoteServer):
         log_path_name = os.path.join(log_path, log_file)
         self.log_file = open(log_path_name, 'w')
 
+        if self._is_listening(.1):
+            logging.info("BrowserMob proxy already running. Won't start again.")
+            return
+        
         self.process = subprocess.Popen(self.command,
                                         stdout=self.log_file,
                                         stderr=subprocess.STDOUT)
