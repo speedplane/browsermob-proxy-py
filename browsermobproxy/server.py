@@ -1,9 +1,12 @@
 import os
 import platform
+import signal
 import socket
 import subprocess
 import time
 import logging
+
+import sys
 
 from .client import Client
 from .exceptions import ProxyServerError
@@ -63,6 +66,8 @@ class Server(RemoteServer):
             More items will be added in the future.
             This defaults to an empty dictionary
         """
+        self.win_env = sys.platform == "win32"
+
         options = options if options is not None else {}
 
         path_var_sep = ':'
@@ -82,7 +87,7 @@ class Server(RemoteServer):
                                    "in path provided: %s" % path)
 
         self.path = path
-        self.host = 'localhost'
+        self.host = options.get('host', 'localhost')
         self.port = options.get('port', 8080)
         self.process = None
 
@@ -109,13 +114,16 @@ class Server(RemoteServer):
         log_path_name = os.path.join(log_path, log_file)
         self.log_file = open(log_path_name, 'w')
 
+
         if self._is_listening(.1):
             logging.info("BrowserMob proxy already running. Won't start again.")
             return
-        
-        self.process = subprocess.Popen(self.command,
-                                        stdout=self.log_file,
-                                        stderr=subprocess.STDOUT)
+       
+        if self.win_env:
+            self.process = self._start_on_windows()
+        else:
+            self.process = self._start_on_unix()
+
         count = 0
         while not self._is_listening():
             if self.process.poll():
@@ -131,6 +139,18 @@ class Server(RemoteServer):
                 self.stop()
                 raise ProxyServerError("Can't connect to Browsermob-Proxy")
 
+    def _start_on_windows(self):
+        return subprocess.Popen(self.command,
+                                creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
+                                stdout=self.log_file,
+                                stderr=subprocess.STDOUT)
+
+    def _start_on_unix(self):
+        return subprocess.Popen(self.command,
+                                preexec_fn=os.setsid,
+                                stdout=self.log_file,
+                                stderr=subprocess.STDOUT)
+
     def stop(self):
         """
         This will stop the process running the proxy
@@ -138,9 +158,11 @@ class Server(RemoteServer):
         if self.process.poll() is not None:
             return
 
+        group_pid = os.getpgid(self.process.pid) if not self.win_env else self.process.pid
         try:
             self.process.kill()
             self.process.wait()
+            os.killpg(group_pid, signal.SIGINT)
         except AttributeError:
             # kill may not be available under windows environment
             pass
